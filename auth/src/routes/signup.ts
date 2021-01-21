@@ -1,5 +1,9 @@
 import express, { Request, Response } from 'express';
-import { body, validationResult } from 'express-validator';
+import { body, ValidationError, validationResult } from 'express-validator';
+import { BadRequestError } from '../errors/bad-request-error';
+import { validateRequest } from '../middlewares/validate-request';
+import { User } from '../models/user';
+import jwt from 'jsonwebtoken';
 import { DatabaseConnectionError } from '../errors/database-connection-error';
 import { RequestValidationError } from '../errors/request-validation-error';
 
@@ -15,21 +19,34 @@ router.post('/api/users/signup',
       .isLength({ min: 4, max: 20 })
       .withMessage('Password must be between  4 and 20 characters')
   ],
-  (req: Request, res: Response) => {
-    const errors = validationResult(req);
-
-    if(!errors.isEmpty()) {
-      throw new RequestValidationError(errors.array());
-    }
-
+  validateRequest,
+  async (req: Request, res: Response) => {
     const { email, password } = req.body;
 
-    console.log('Creating new user');
-    throw new DatabaseConnectionError();
+    const existingUser = await User.findOne({ email });
 
-    res.send({})
-    
+    if (existingUser) {
+      throw new BadRequestError('Email in use');
+    }
 
+    const user = User.build({ email, password });
+    await user.save();
+
+    // Generate JWT
+    const userJwt = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+      },
+      process.env.JWT_KEY!
+    );
+
+    // Store it on session object
+    req.session = {
+      jwt: userJwt,
+    };
+
+    return res.status(201).send(user);
   }
 )
 
